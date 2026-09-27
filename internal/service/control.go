@@ -465,7 +465,12 @@ func (r *Runtime) Cancel(runID string) error {
 	if err := r.Runs.Cancel(runID); err != nil {
 		return err
 	}
-	r.Pressure.Stop()
+	r.Pressure.Reset()
+	current, ok := r.Runs.Get(runID)
+	if !ok {
+		return fmt.Errorf("run %s not found after cancellation", runID)
+	}
+	now := time.Now().UTC()
 	r.mu.Lock()
 	for id, routeState := range r.control.Routes {
 		if routeState.RunID == runID {
@@ -473,8 +478,36 @@ func (r *Runtime) Cancel(runID string) error {
 			routeState.RunID = ""
 			routeState.Reserved = false
 			routeState.LeaseEpoch = 0
-			routeState.UpdatedAt = time.Now().UTC()
+			routeState.UpdatedAt = now
 			r.control.Routes[id] = routeState
+		}
+	}
+	for id, pressureState := range r.control.Pressures {
+		if pressureState.RunID == runID {
+			pressureState.RunID = ""
+			pressureState.Value = 0
+			pressureState.Target = 0
+			pressureState.Mode = model.CompressorStopped
+			pressureState.ObservedAt = now
+			r.control.Pressures[id] = pressureState
+		}
+	}
+	for id, valveState := range r.control.Valves {
+		if valveState.RunID == runID {
+			valveState.RunID = ""
+			valveState.Position = model.ValveClosed
+			valveState.CommandEpoch = current.Epoch
+			valveState.ObservedAt = now
+			r.control.Valves[id] = valveState
+		}
+	}
+	for id, closure := range r.control.Closures {
+		if closure.RunID == runID {
+			closure.RunID = ""
+			closure.Locked = false
+			closure.CommandEpoch = current.Epoch
+			closure.ObservedAt = now
+			r.control.Closures[id] = closure
 		}
 	}
 	r.control.Revision = model.NewRevision()
@@ -482,6 +515,7 @@ func (r *Runtime) Cancel(runID string) error {
 	return r.appendEvent(model.Event{
 		RunID:   runID,
 		Kind:    "cancelled",
+		Epoch:   current.Epoch,
 		Payload: "operator cancellation",
 	})
 }

@@ -27,3 +27,10 @@ func (c *Controller) Current() model.CommandReceipt {
 	defer c.mu.Unlock()
 	return c.current
 }
+func (c *Controller) ReleaseClosure(runID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.current.RunID == runID {
+		c.current = model.CommandReceipt{}
+	}
+}

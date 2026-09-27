@@ -28,4 +28,10 @@ func (c *Controller) Apply(runID string, value float64) error {
 	c.history = append(c.history, value)
 	return nil
 }
-func (c *Controller) Stop() { c.mu.Lock(); c.stopped = true; c.enabled = false; c.mu.Unlock() }
+func (c *Controller) Stop() {
+	c.mu.Lock()
+	c.stopped = true
+	c.enabled = false
+	c.current = 0
+	c.mu.Unlock()
+}

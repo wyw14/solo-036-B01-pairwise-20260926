@@ -11,3 +11,9 @@ func (c *Controller) CompleteIsolation(runID string, epoch int64) {
 	c.isolated[runID] = epoch
 	c.mu.Unlock()
 }
+
+func (c *Controller) Release(runID string) {
+	c.mu.Lock()
+	delete(c.isolated, runID)
+	c.mu.Unlock()
+}

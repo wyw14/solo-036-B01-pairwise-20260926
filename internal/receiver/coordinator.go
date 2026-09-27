@@ -25,3 +25,9 @@ func (c *Controller) IsOpen(runID string) bool {
 	defer c.mu.Unlock()
 	return c.opened[runID]
 }
+func (c *Controller) Release(runID string) {
+	c.mu.Lock()
+	delete(c.current, runID)
+	delete(c.opened, runID)
+	c.mu.Unlock()
+}

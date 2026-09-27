@@ -462,27 +462,69 @@ func (r *Runtime) Complete(runID, routeID string) (model.OperationRecord, error)
 }
 
 func (r *Runtime) Cancel(runID string) error {
+	current, ok := r.Runs.Get(runID)
+	if !ok {
+		return fmt.Errorf("run %s not found", runID)
+	}
+	if current.State.Terminal() {
+		return nil
+	}
 	if err := r.Runs.Cancel(runID); err != nil {
 		return err
 	}
+	cancelled, _ := r.Runs.Get(runID)
+	now := time.Now().UTC()
+
+	// 现场设备停机泄压，并解除各控制器为该运行持有的围栏凭证
 	r.Pressure.Stop()
+	r.Launcher.ReleaseClosure(runID)
+	r.Valves.Release(runID)
+	r.Receiver.Release(runID)
+
 	r.mu.Lock()
-	for id, routeState := range r.control.Routes {
+	control := r.control
+	if control == nil {
+		control = defaultControlState()
+		r.control = control
+	}
+	for id, routeState := range control.Routes {
 		if routeState.RunID == runID {
 			r.Routes.Release(id, runID)
 			routeState.RunID = ""
 			routeState.Reserved = false
 			routeState.LeaseEpoch = 0
-			routeState.UpdatedAt = time.Now().UTC()
-			r.control.Routes[id] = routeState
+			routeState.UpdatedAt = now
+			control.Routes[id] = routeState
 		}
 	}
-	r.control.Revision = model.NewRevision()
+	if pressureState, ok := control.Pressures[current.Station]; ok && pressureState.RunID == runID {
+		pressureState.RunID = ""
+		pressureState.Value = 0
+		pressureState.Target = 0
+		pressureState.Mode = model.CompressorStopped
+		pressureState.ObservedAt = now
+		control.Pressures[current.Station] = pressureState
+	}
+	if valveState, ok := control.Valves[current.Station+"/main"]; ok && valveState.RunID == runID {
+		valveState.RunID = ""
+		valveState.Position = model.ValveClosed
+		valveState.CommandEpoch = 0
+		valveState.ObservedAt = now
+		control.Valves[valveState.ID] = valveState
+	}
+	if closure, ok := control.Closures[current.Station]; ok && closure.RunID == runID {
+		delete(control.Closures, current.Station)
+	}
+	control.Revision = model.NewRevision()
 	r.mu.Unlock()
+
+	r.recordIncident(runID, "warning", "run cancelled: compressor stopped, pressure vented, main valve closed, closure released")
 	return r.appendEvent(model.Event{
 		RunID:   runID,
 		Kind:    "cancelled",
+		Epoch:   cancelled.Epoch,
 		Payload: "operator cancellation",
+		At:      now,
 	})
 }
 
